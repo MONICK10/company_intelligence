@@ -1,11 +1,12 @@
 import { useState, useEffect, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Lock, ChevronDown, ChevronUp } from 'lucide-react'
+import { Lock, ChevronDown, ChevronUp, AlertCircle, RefreshCw } from 'lucide-react'
 import { CompanyLogo } from '@/components/CompanyLogo'
+import { Button } from '@/components/ui/button'
 import { useCompany } from '@/context/CompanyContext'
-import { SEED_COMPANIES } from '@/data/seedCompanies'
-import { SKILL_ROADMAPS } from '@/data/skillTopics'
-import { normalizeDashboardSkills, type DashboardSkill } from '@/lib/companyData'
+import { type DashboardSkill } from '@/lib/companyData'
+import { useCompanySkills, type SkillRoadmap } from '@/lib/companyApi'
+import { isSupabaseMisconfigured } from '@/lib/supabaseClient'
 
 // ── Bloom taxonomy config ────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ const CRITICALITY_CONFIG = {
   Baseline: { color: 'bg-green-500', label: 'Baseline', desc: 'Good to have' },
 } as const
 
-// ── Progress bar with bloom color ─────────────────────────────────────────────
+// ── Progress bar ──────────────────────────────────────────────────────────────
 
 function SkillProgressBar({ score, bloomLevel }: { score: number; bloomLevel: DashboardSkill['bloom_level'] }) {
   const pct = (score / 10) * 100
@@ -87,15 +88,19 @@ function RoadmapRow({
 
 // ── Skill card ────────────────────────────────────────────────────────────────
 
-const SkillCard = memo(function SkillCard({ skill }: { skill: DashboardSkill }) {
+const SkillCard = memo(function SkillCard({
+  skill,
+  roadmap,
+}: {
+  skill: DashboardSkill
+  roadmap?: SkillRoadmap
+}) {
   const [expanded, setExpanded] = useState(false)
   const bloom = BLOOM_CONFIG[skill.bloom_level]
   const criticality = CRITICALITY_CONFIG[skill.criticality]
-  const roadmap = SKILL_ROADMAPS.find((r) => r.skill_set_id === skill.skill_set_id)
 
   return (
     <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
-      {/* Header */}
       <div className="p-4 flex flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <h3 className="font-heading font-semibold text-sm text-foreground leading-tight flex-1">
@@ -119,7 +124,6 @@ const SkillCard = memo(function SkillCard({ skill }: { skill: DashboardSkill }) 
         <SkillProgressBar score={skill.score} bloomLevel={skill.bloom_level} />
       </div>
 
-      {/* Expand toggle */}
       {roadmap && (
         <div className="border-t">
           <button
@@ -149,6 +153,50 @@ const SkillCard = memo(function SkillCard({ skill }: { skill: DashboardSkill }) 
   )
 })
 
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+
+function SkillsSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="rounded-lg border bg-card p-4 animate-pulse">
+          <div className="h-4 w-3/4 rounded bg-muted mb-3" />
+          <div className="h-2 w-full rounded bg-muted mb-2" />
+          <div className="h-2 w-2/3 rounded bg-muted" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Error state ───────────────────────────────────────────────────────────────
+
+function SkillsError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <AlertCircle className="h-10 w-10 text-muted-foreground" />
+      {isSupabaseMisconfigured ? (
+        <>
+          <p className="text-sm font-medium text-foreground">Supabase not configured</p>
+          <p className="text-xs text-muted-foreground text-center max-w-sm">
+            Add <code className="bg-muted px-1 rounded">VITE_SUPABASE_URL</code> and{' '}
+            <code className="bg-muted px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to{' '}
+            <code className="bg-muted px-1 rounded">.env</code>, then restart.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium text-foreground">Failed to load skill data</p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Retry
+          </Button>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SkillIntelligence() {
@@ -159,19 +207,14 @@ export default function SkillIntelligence() {
     if (!selected) navigate('/')
   }, [selected, navigate])
 
+  const { data, isLoading, isError, refetch } = useCompanySkills(
+    selected?.companyId ?? null,
+  )
+
   if (!selected) return null
 
-  const seedEntry = SEED_COMPANIES.find((c) => c.company_id === selected.companyId)
-  const skills: DashboardSkill[] = seedEntry
-    ? normalizeDashboardSkills(seedEntry.skill_levels)
-    : []
-
-  const domain = seedEntry
-    ? (() => {
-        try { return new URL(seedEntry.short_json.website_url).hostname.replace(/^www\./, '') }
-        catch { return undefined }
-      })()
-    : undefined
+  const skills = data?.skills ?? []
+  const roadmaps = data?.roadmaps ?? []
 
   return (
     <div className="min-h-full pb-16">
@@ -180,7 +223,6 @@ export default function SkillIntelligence() {
         <CompanyLogo
           name={selected.companyName}
           logoUrl={selected.logoUrl}
-          domain={domain}
           size="md"
         />
         <div>
@@ -188,7 +230,7 @@ export default function SkillIntelligence() {
             {selected.companyName} — Skill Intelligence
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {skills.length} skills · Required proficiency roadmap
+            {isLoading ? 'Loading skills…' : `${skills.length} skills · Required proficiency roadmap`}
           </p>
         </div>
       </div>
@@ -202,10 +244,7 @@ export default function SkillIntelligence() {
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {(Object.entries(BLOOM_CONFIG) as [DashboardSkill['bloom_level'], typeof BLOOM_CONFIG[keyof typeof BLOOM_CONFIG]][]).map(([key, cfg]) => (
-              <div
-                key={key}
-                className={`rounded-md border px-2.5 py-1.5 ${cfg.bg} ${cfg.border}`}
-              >
+              <div key={key} className={`rounded-md border px-2.5 py-1.5 ${cfg.bg} ${cfg.border}`}>
                 <p className={`text-xs font-bold ${cfg.text}`}>{cfg.short}</p>
                 <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{cfg.label}</p>
               </div>
@@ -233,14 +272,26 @@ export default function SkillIntelligence() {
 
         {/* Skills grid */}
         <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-            Required Skills ({skills.length})
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {skills.map((s) => (
-              <SkillCard key={s.skill_set_id} skill={s} />
-            ))}
-          </div>
+          {!isLoading && !isError && (
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Required Skills ({skills.length})
+            </p>
+          )}
+
+          {isLoading && <SkillsSkeleton />}
+          {isError && <SkillsError onRetry={() => void refetch()} />}
+
+          {!isLoading && !isError && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {skills.map((s) => (
+                <SkillCard
+                  key={s.skill_set_id}
+                  skill={s}
+                  roadmap={roadmaps.find((r) => r.skill_set_id === s.skill_set_id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -1,15 +1,12 @@
 import { useState, useMemo, useCallback, memo } from 'react'
-import { Search, X } from 'lucide-react'
+import { Search, X, AlertCircle, RefreshCw } from 'lucide-react'
 import { CompanyCard } from '@/components/CompanyCard'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { SEED_COMPANIES } from '@/data/seedCompanies'
-import { normalizeCompanySummary, type CompanySummary } from '@/lib/companyData'
+import { type CompanySummary } from '@/lib/companyData'
 import { useDebounce } from '@/hooks/useDebounce'
-
-const ALL_COMPANIES: CompanySummary[] = SEED_COMPANIES.map((c) =>
-  normalizeCompanySummary(c.short_json as Record<string, unknown>, c.company_id),
-)
+import { useCompanies } from '@/lib/companyApi'
+import { isSupabaseMisconfigured } from '@/lib/supabaseClient'
 
 const CATEGORY_FILTERS = ['All', 'Super Dream', 'Dream', 'Standard', 'Regular'] as const
 type CategoryFilter = (typeof CATEGORY_FILTERS)[number]
@@ -54,15 +51,43 @@ const SkeletonGrid = memo(function SkeletonGrid() {
   )
 })
 
+function ErrorGrid({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <AlertCircle className="h-10 w-10 text-muted-foreground" />
+      {isSupabaseMisconfigured ? (
+        <>
+          <p className="text-sm font-medium text-foreground">Supabase not configured</p>
+          <p className="text-xs text-muted-foreground text-center max-w-sm">
+            Add <code className="bg-muted px-1 rounded">VITE_SUPABASE_URL</code> and{' '}
+            <code className="bg-muted px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to your{' '}
+            <code className="bg-muted px-1 rounded">.env</code> file, then restart the dev server.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium text-foreground">Failed to load companies</p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Retry
+          </Button>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function Index() {
   const [rawSearch, setRawSearch] = useState('')
   const [category, setCategory] = useState<CategoryFilter>('All')
   const search = useDebounce(rawSearch, 200)
 
-  const counts = useMemo(() => countByCategory(ALL_COMPANIES), [])
+  const { data: companies = [], isLoading, isError, refetch } = useCompanies()
+
+  const counts = useMemo(() => countByCategory(companies), [companies])
 
   const filtered = useMemo(() => {
-    return ALL_COMPANIES.filter((c) => {
+    return companies.filter((c) => {
       const matchesCategory = category === 'All' || c.company_type === category
       if (!matchesCategory) return false
       if (!search) return true
@@ -74,7 +99,7 @@ export default function Index() {
         c.category.toLowerCase().includes(q)
       )
     })
-  }, [search, category])
+  }, [companies, search, category])
 
   const handleClear = useCallback(() => {
     setRawSearch('')
@@ -86,7 +111,6 @@ export default function Index() {
       {/* Hero */}
       <div className="border-b bg-white px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
-          {/* Wordmark */}
           <div className="mb-4 flex items-center gap-2">
             <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 tracking-wide">
               KITS · INTELLIGENCE PLATFORM
@@ -104,7 +128,6 @@ export default function Index() {
             Your strategic edge for campus placements
           </p>
 
-          {/* Search */}
           <div className="mt-5 relative max-w-lg">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
@@ -128,7 +151,6 @@ export default function Index() {
 
       {/* Filter pills + grid */}
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        {/* Filter pills */}
         <div className="flex flex-wrap gap-2 mb-6">
           {CATEGORY_FILTERS.map((cat) => (
             <button
@@ -143,14 +165,16 @@ export default function Index() {
           ))}
         </div>
 
-        {/* Results count */}
-        <p className="mb-4 text-xs text-muted-foreground">
-          {filtered.length} {filtered.length === 1 ? 'company' : 'companies'} found
-        </p>
+        {!isLoading && !isError && (
+          <p className="mb-4 text-xs text-muted-foreground">
+            {filtered.length} {filtered.length === 1 ? 'company' : 'companies'} found
+          </p>
+        )}
 
-        {/* Grid */}
-        {ALL_COMPANIES.length === 0 ? (
+        {isLoading ? (
           <SkeletonGrid />
+        ) : isError ? (
+          <ErrorGrid onRetry={() => void refetch()} />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <p className="text-muted-foreground text-sm">No companies match your search.</p>

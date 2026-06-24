@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState, useCallback, memo } from 'react'
+import type { ReactNode, RefCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, AlertCircle, RefreshCw } from 'lucide-react'
+import { CompanyLogo } from '@/components/CompanyLogo'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { useCompany } from '@/context/CompanyContext'
+import { buildIntelligenceSections } from '@/data/intelligenceData'
+import type { CompanyProfile } from '@/lib/companyData'
+import { useCompanyProfile } from '@/lib/companyApi'
+import { isSupabaseMisconfigured } from '@/lib/supabaseClient'
+
+// ── Inline LinkedIn icon (lucide-react removed brand icons) ──────────────────
 
 function LinkedinIcon({ className }: { className?: string }) {
   return (
@@ -9,14 +20,6 @@ function LinkedinIcon({ className }: { className?: string }) {
     </svg>
   )
 }
-import { CompanyLogo } from '@/components/CompanyLogo'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { useCompany } from '@/context/CompanyContext'
-import { SEED_COMPANIES } from '@/data/seedCompanies'
-import { buildIntelligenceSections } from '@/data/intelligenceData'
-import { normalizeCompanyProfile } from '@/lib/companyData'
-import type { CompanyProfile } from '@/lib/companyData'
 
 // ── Null-value detection ─────────────────────────────────────────────────────
 
@@ -42,7 +45,7 @@ function isRatingValue(label: string): boolean {
 
 // ── Value renderer ────────────────────────────────────────────────────────────
 
-function renderValue(rawValue: string, label: string): React.ReactNode {
+function renderValue(rawValue: string, label: string): ReactNode {
   if (isNullish(rawValue)) {
     return (
       <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground italic">
@@ -85,7 +88,6 @@ function renderValue(rawValue: string, label: string): React.ReactNode {
     return <span className="font-semibold text-sm">{v}</span>
   }
 
-  // Split on semicolons, newlines, bullets
   const parts = v
     .split(/[;\n•]+/)
     .map((s) => s.trim())
@@ -103,7 +105,6 @@ function renderValue(rawValue: string, label: string): React.ReactNode {
     )
   }
 
-  // Long text → paragraph
   if (v.length > 120) {
     return <p className="text-sm text-foreground leading-relaxed">{v}</p>
   }
@@ -130,10 +131,10 @@ const FieldRow = memo(function FieldRow({ label, value }: { label: string; value
 interface SectionCardProps {
   id: string
   title: string
-  icon: React.ReactNode
+  icon: ReactNode
   fields: Array<{ key: string; label: string }>
   profile: CompanyProfile
-  sectionRef: React.RefCallback<HTMLDivElement>
+  sectionRef: RefCallback<HTMLDivElement>
 }
 
 const SectionCard = memo(function SectionCard({
@@ -172,6 +173,60 @@ const SectionCard = memo(function SectionCard({
   )
 })
 
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+
+function IntelligenceSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 p-4 max-w-5xl mx-auto w-full pb-16">
+      <div className="h-9 w-full rounded bg-muted animate-pulse" />
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="rounded-lg border bg-card shadow-sm overflow-hidden animate-pulse">
+          <div className="px-4 py-3 border-b bg-secondary/30 flex items-center gap-2">
+            <div className="h-4 w-4 rounded bg-muted" />
+            <div className="h-3 w-32 rounded bg-muted" />
+          </div>
+          <div className="px-4 py-3 space-y-3">
+            {Array.from({ length: 4 }).map((_, j) => (
+              <div key={j} className="flex gap-4">
+                <div className="h-3 w-1/3 rounded bg-muted shrink-0" />
+                <div className="h-3 flex-1 rounded bg-muted" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Error state ───────────────────────────────────────────────────────────────
+
+function IntelligenceError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <AlertCircle className="h-10 w-10 text-muted-foreground" />
+      {isSupabaseMisconfigured ? (
+        <>
+          <p className="text-sm font-medium text-foreground">Supabase not configured</p>
+          <p className="text-xs text-muted-foreground text-center max-w-sm">
+            Add <code className="bg-muted px-1 rounded">VITE_SUPABASE_URL</code> and{' '}
+            <code className="bg-muted px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to{' '}
+            <code className="bg-muted px-1 rounded">.env</code>, then restart.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium text-foreground">Failed to load company data</p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Retry
+          </Button>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CompanyIntelligence() {
@@ -186,16 +241,15 @@ export default function CompanyIntelligence() {
     if (!selected) navigate('/')
   }, [selected, navigate])
 
+  const { data: profile, isLoading, isError, refetch } = useCompanyProfile(
+    selected?.companyId ?? null,
+  )
+
   const sections = buildIntelligenceSections()
 
-  // Resolve company data
-  const seedEntry = SEED_COMPANIES.find((c) => c.company_id === selected?.companyId)
-  const profile: CompanyProfile | null = seedEntry
-    ? normalizeCompanyProfile(seedEntry.full_json as Record<string, unknown>)
-    : null
-
-  // Scroll-spy
+  // Scroll-spy via IntersectionObserver
   useEffect(() => {
+    if (!profile) return
     const observer = new IntersectionObserver(
       (entries) => {
         if (isScrollingRef.current) return
@@ -214,14 +268,13 @@ export default function CompanyIntelligence() {
       },
       { rootMargin: '-20% 0px -60% 0px', threshold: [0, 0.1, 0.5] },
     )
-
     sectionRefs.current.forEach((el) => {
       if (el) observer.observe(el)
     })
     return () => observer.disconnect()
-  }, [sections.length])
+  }, [profile, sections.length])
 
-  // Auto-center active tab
+  // Auto-center active tab in scrollable tab bar
   useEffect(() => {
     const bar = tabBarRef.current
     if (!bar) return
@@ -229,7 +282,8 @@ export default function CompanyIntelligence() {
     if (!activeTab) return
     const barRect = bar.getBoundingClientRect()
     const tabRect = activeTab.getBoundingClientRect()
-    const scrollLeft = bar.scrollLeft + (tabRect.left - barRect.left) - barRect.width / 2 + tabRect.width / 2
+    const scrollLeft =
+      bar.scrollLeft + (tabRect.left - barRect.left) - barRect.width / 2 + tabRect.width / 2
     bar.scrollTo({ left: scrollLeft, behavior: 'smooth' })
   }, [activeIdx])
 
@@ -239,18 +293,26 @@ export default function CompanyIntelligence() {
     isScrollingRef.current = true
     setActiveIdx(idx)
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    setTimeout(() => { isScrollingRef.current = false }, 800)
+    setTimeout(() => {
+      isScrollingRef.current = false
+    }, 800)
   }, [])
 
-  if (!selected || !profile) return null
+  if (!selected) return null
 
-  const domain = profile.website_url
-    ? new URL(profile.website_url).hostname.replace(/^www\./, '')
+  const domain = profile?.website_url
+    ? (() => {
+        try {
+          return new URL(profile.website_url).hostname.replace(/^www\./, '')
+        } catch {
+          return undefined
+        }
+      })()
     : undefined
 
   return (
     <div className="flex flex-col min-h-full">
-      {/* Sticky company info bar */}
+      {/* Sticky company info bar — always visible */}
       <div className="sticky top-0 z-20 border-b bg-white px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 shadow-sm">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <CompanyLogo
@@ -261,71 +323,87 @@ export default function CompanyIntelligence() {
           />
           <div className="min-w-0">
             <h1 className="font-heading font-bold text-base text-foreground truncate leading-tight">
-              {profile.name}
+              {profile?.name ?? selected.companyName}
             </h1>
-            <Badge variant="outline" className="mt-0.5 text-xs">
-              {profile.category || profile.nature_of_company}
-            </Badge>
+            {profile && (
+              <Badge variant="outline" className="mt-0.5 text-xs">
+                {profile.category || profile.nature_of_company}
+              </Badge>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {profile.website_url && !['na', 'n/a'].includes(profile.website_url.toLowerCase()) && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={profile.website_url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                Website
-              </a>
-            </Button>
-          )}
-          {profile.linkedin_url && !['na', 'n/a'].includes(profile.linkedin_url.toLowerCase()) && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={profile.linkedin_url} target="_blank" rel="noopener noreferrer">
-                <LinkedinIcon className="h-3.5 w-3.5 mr-1" />
-                LinkedIn
-              </a>
-            </Button>
-          )}
-        </div>
+        {profile && (
+          <div className="flex items-center gap-2 shrink-0">
+            {profile.website_url &&
+              !['na', 'n/a'].includes(profile.website_url.toLowerCase()) && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={profile.website_url} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                    Website
+                  </a>
+                </Button>
+              )}
+            {profile.linkedin_url &&
+              !['na', 'n/a'].includes(profile.linkedin_url.toLowerCase()) && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={profile.linkedin_url} target="_blank" rel="noopener noreferrer">
+                    <LinkedinIcon className="h-3.5 w-3.5 mr-1" />
+                    LinkedIn
+                  </a>
+                </Button>
+              )}
+          </div>
+        )}
       </div>
 
-      {/* Sticky tab bar */}
-      <div
-        ref={tabBarRef}
-        className="sticky top-[calc(var(--sticky-offset,57px))] z-10 flex gap-0.5 overflow-x-auto scrollbar-hide border-b bg-white px-2 py-1.5"
-        style={{ ['--sticky-offset' as string]: '57px' }}
-      >
-        {sections.map((s, idx) => (
-          <button
-            key={s.id}
-            onClick={() => scrollToSection(idx)}
-            className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors shrink-0 ${
-              activeIdx === idx
-                ? 'bg-[#EFF6FF] text-[#2563EB]'
-                : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-            }`}
+      {/* Loading / error states */}
+      {isLoading && <IntelligenceSkeleton />}
+      {isError && <IntelligenceError onRetry={() => void refetch()} />}
+
+      {/* Content — rendered only when profile is available */}
+      {profile && (
+        <>
+          {/* Sticky tab navigation */}
+          <div
+            ref={tabBarRef}
+            className="sticky top-[57px] z-10 flex gap-0.5 overflow-x-auto scrollbar-hide border-b bg-white px-2 py-1.5"
           >
-            <span className={activeIdx === idx ? 'text-[#2563EB]' : 'text-muted-foreground'}>
-              {s.icon}
-            </span>
-            <span>{s.title}</span>
-          </button>
-        ))}
-      </div>
+            {sections.map((s, idx) => (
+              <button
+                key={s.id}
+                onClick={() => scrollToSection(idx)}
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors shrink-0 ${
+                  activeIdx === idx
+                    ? 'bg-[#EFF6FF] text-[#2563EB]'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                }`}
+              >
+                <span className={activeIdx === idx ? 'text-[#2563EB]' : 'text-muted-foreground'}>
+                  {s.icon}
+                </span>
+                <span>{s.title}</span>
+              </button>
+            ))}
+          </div>
 
-      {/* Section content */}
-      <div className="flex flex-col gap-4 p-4 max-w-5xl mx-auto w-full pb-16">
-        {sections.map((s, idx) => (
-          <SectionCard
-            key={s.id}
-            id={s.id}
-            title={s.title}
-            icon={s.icon}
-            fields={s.fields}
-            profile={profile}
-            sectionRef={(el) => { sectionRefs.current[idx] = el }}
-          />
-        ))}
-      </div>
+          {/* 22 section cards */}
+          <div className="flex flex-col gap-4 p-4 max-w-5xl mx-auto w-full pb-16">
+            {sections.map((s, idx) => (
+              <SectionCard
+                key={s.id}
+                id={s.id}
+                title={s.title}
+                icon={s.icon}
+                fields={s.fields}
+                profile={profile}
+                sectionRef={(el) => {
+                  sectionRefs.current[idx] = el
+                }}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

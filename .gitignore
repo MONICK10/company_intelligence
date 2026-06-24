@@ -1,3 +1,7 @@
+# Environment — keep .env.example committed, never .env
+.env
+.env.*.local
+
 # Logs
 logs
 *.log

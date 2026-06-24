@@ -6,14 +6,18 @@ A mobile-first React + Vite + TypeScript + Tailwind v3 + shadcn/ui SPA for campu
 
 ---
 
-## Phase 1 — UI Only (Current)
+## Phase 2 — Supabase (Current)
 
-This is a **Phase 1 build**. All data comes from a single hardcoded TypeScript seed file:
-`src/data/seedCompanies.ts`
+All company and skill data is loaded live from Supabase. No login required — every route is publicly accessible.
 
-- **No database.** No Supabase, no migrations, no RLS policies.
-- **No login.** Every route is publicly accessible with no authentication.
-- The portal renders fully from the Accenture seed record included in the seed file.
+### The only manual step: fill in `.env`
+
+```env
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key-here
+```
+
+Copy `.env.example` to `.env` and paste your project URL and anon key from the Supabase dashboard (Settings → API). Then restart the dev server. That's it.
 
 ---
 
@@ -33,46 +37,32 @@ This is a **Phase 1 build**. All data comes from a single hardcoded TypeScript s
 | `/company/skills` | Skill intelligence with Bloom taxonomy + 10-level roadmaps |
 | `*` | 404 Not Found |
 
-No `/login`, no `/dashboard`.
+No `/login`, no `/dashboard`, no auth of any kind.
 
 ---
 
 ## Getting Started
 
 ```bash
+cp .env.example .env          # then fill in VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY
 npm install
-npm run dev       # http://localhost:5173
-npm run build     # production build
-npm run test      # Vitest smoke tests
+npm run dev                   # http://localhost:5173
+npm run build                 # production build
+npm run test                  # Vitest smoke tests
 ```
 
 ---
 
-## Environment Variables
+## Data Sources
 
-Only one optional env var in Phase 1:
+| Data | Table(s) |
+|------|----------|
+| Company grid | `company_json.short_json` |
+| 22-section intelligence | `company_json.full_json` |
+| Skill cards + criticality | `company_skill_levels`, `skill_set_master`, `proficiency_levels` |
+| 10-level roadmaps | `skill_set_topics` |
 
-```env
-VITE_LOGO_DEV_PUBLISHABLE_KEY=your_key_here
-```
-
-If unset, company logos fall back to the seed `logo_url`, then to an initial-letter circle.
-
-**Do NOT add `VITE_SUPABASE_*` — Phase 1 has no Supabase.**
-
----
-
-## Phase 2 — Supabase Integration (Future)
-
-Phase 2 will swap the data layer from hardcoded seed → Supabase. The normalizers in
-`src/lib/companyData.ts` accept the same JSON shapes as the future database tables:
-
-- `normalizeCompanySummary(short_json, id)` → `CompanySummary`
-- `normalizeCompanyProfile(full_json, short_json?)` → `CompanyProfile`
-- `normalizeDashboardSkills(skill_levels[])` → `DashboardSkill[]`
-
-Swapping seed → Supabase is a **one-file change**: pipe Supabase row results into these
-normalizers instead of the seed data. No page or component changes required.
+Only the `company_json` table is used for company data — no joins to the 90+ normalised company tables.
 
 ---
 
@@ -81,25 +71,36 @@ normalizers instead of the seed data. No page or component changes required.
 ```
 src/
 ├── data/
-│   ├── seedCompanies.ts      # Phase 1 hardcoded data (Accenture)
-│   ├── skillTopics.ts        # 10-level roadmaps for all 12 skills
-│   └── intelligenceData.tsx  # 22-section schema with icons
+│   ├── seedCompanies.ts         # Phase 1 fallback (Accenture) — not used in live path
+│   ├── skillTopics.ts           # Phase 1 fallback roadmaps — not used in live path
+│   └── intelligenceData.tsx     # 22-section schema with icons
 ├── lib/
-│   ├── utils.ts              # cn() utility
-│   └── companyData.ts        # Pure normalizers + TS interfaces
+│   ├── supabaseClient.ts        # Supabase JS client (env-var validated)
+│   ├── companyApi.ts            # React Query hooks: useCompanies, useCompanyProfile, useCompanySkills
+│   ├── companyData.ts           # Pure normalizers + TS interfaces
+│   └── utils.ts                 # cn() utility
 ├── context/
-│   └── CompanyContext.tsx    # localStorage-persisted company selection
+│   └── CompanyContext.tsx       # localStorage-persisted company selection
 ├── components/
-│   ├── ui/                   # shadcn/ui components
-│   ├── CompanyLogo.tsx       # Logo.dev → seed URL → initial fallback
-│   ├── CompanyCard.tsx       # Memoized card for the grid
-│   ├── AppSidebar.tsx        # Collapsible sidebar with nav
-│   └── AppLayout.tsx         # Shell with sidebar + breadcrumbs
+│   ├── ui/                      # shadcn/ui components
+│   ├── CompanyLogo.tsx          # Logo.dev → seed URL → initial fallback
+│   ├── CompanyCard.tsx          # Memoized card for the grid
+│   ├── AppSidebar.tsx           # Collapsible sidebar with nav
+│   └── AppLayout.tsx            # Shell with sidebar + breadcrumbs
 ├── pages/
-│   ├── Index.tsx             # Company grid with search + filter
-│   ├── CompanyIntelligence.tsx  # 22-section intelligence view
-│   ├── SkillIntelligence.tsx    # Skill cards + roadmap
-│   └── NotFound.tsx          # 404 page
+│   ├── Index.tsx                # Company grid — useCompanies()
+│   ├── CompanyIntelligence.tsx  # 22-section view — useCompanyProfile()
+│   ├── SkillIntelligence.tsx    # Skill cards — useCompanySkills()
+│   └── NotFound.tsx             # 404 page
 └── hooks/
-    └── useDebounce.ts        # 200ms search debounce
+    └── useDebounce.ts           # 200ms search debounce
 ```
+
+---
+
+## Hard Constraints (permanent)
+
+- **No login.** No AuthContext, no ProtectedRoute, no Supabase Auth. Every route is open.
+- **No CTC / Stipend / Selection Ratio** displayed anywhere.
+- **Read-only.** No inserts, updates, or deletes against Supabase.
+- **No college logo** in the UI.
